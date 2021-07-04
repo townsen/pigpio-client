@@ -105,11 +105,11 @@ const CMDS = {
   WVTAT:  101,// waveTxAt
   PADS:   102,
   PADG:   103,
-  FO:     104,
-  FC:     105,
-  FR:     106,
+  FO:     104, // fileOpen
+  FC:     105, // fileClose
+  FR:     106, // fileRead
   FW:     107,
-  FS:     108,
+  FS:     108, // fileSeek
   FL:     109,
   SHELL:  110,
   BSPIC:  111,
@@ -144,8 +144,14 @@ exports.Constants = {
   PI_WAVE_MODE_ONE_SHOT: 0,
   PI_WAVE_MODE_REPEAT: 1,
   PI_WAVE_MODE_ONE_SHOT_SYNC: 2,
-  PI_WAVE_MODE_REPEAT_SYNC: 3
-}
+  PI_WAVE_MODE_REPEAT_SYNC: 3,
+  PI_FILE_READ: 1,
+  PI_FILE_WRITE: 2,
+  PI_FILE_RW: 3,
+  PI_FROM_START: 0,
+  PI_FROM_CURRENT: 1,
+  PI_FROM_END: 2
+  }
 
 /* Error messages */
 exports.PigpioErrors = {

@@ -13,8 +13,8 @@ const ERR = SIF.PigpioErrors
 // These commands are currently supported by pigpio-client:
 const { BR1, BR2, TICK, HWVER, PIGPV, PUD, MODES, MODEG, READ, WRITE, PWM, WVCLR,
 WVCRE, WVBSY, WVAG, WVCHA, NOIB, NB, NP, NC, SLRO, SLR, SLRC, SLRI, WVTXM, WVTAT,
-WVHLT, WVDEL, WVAS, HP, HC, GDC, PFS, FG, SERVO, GPW, TRIG,
-I2CO, I2CC, I2CRD, I2CWD, BSCX, EVM
+WVHLT, WVDEL, WVAS, HP, HC, GDC, PFS, FG, SERVO, GPW, TRIG, SPIO, SPIC, SPIW, FO, FC, FR,
+FS, I2CO, I2CC, I2CRD, I2CWD, BSCX, EVM
 } = SIF.Commands
 
 // These command types can not fail, ie, always return p3/res as positive integer
@@ -28,7 +28,10 @@ const extResCmdSet = SIF.extResCmdSet
 
 /* pigpio constants */
 const {PUD_OFF, PUD_DOWN, PUD_UP, PI_WAVE_MODE_ONE_SHOT, PI_WAVE_MODE_REPEAT,
-PI_WAVE_MODE_ONE_SHOT_SYNC, PI_WAVE_MODE_REPEAT_SYNC} = SIF.Constants
+PI_WAVE_MODE_ONE_SHOT_SYNC, PI_WAVE_MODE_REPEAT_SYNC, PI_FILE_READ, PI_FILE_WRITE,
+PI_FILE_RW, PI_FROM_START, PI_FROM_CURRENT, PI_FROM_END} = SIF.Constants
+
+exports.Constants = SIF.Constants;
 
 var info = {
   host: 'localhost',
@@ -439,7 +442,7 @@ exports.pigpio = function (pi) {
         }
         handle= res
         log('opened notification socket with handle= ' + handle)
-        
+
         // Enable BSC peripheral event monitoring (pigpio built-in event)
         let arrayBuffer = new Uint8Array(4)
         let bscEventBits = new Uint32Array(arrayBuffer, 0, 1)
@@ -630,7 +633,7 @@ exports.pigpio = function (pi) {
       if (typeof cb === 'function') cb()
     })
   }
-  
+
   that.i2cOpen = function (bus, device, callback) {
     let flags = new Uint8Array(4);  // inits to zero
     return request(I2CO, bus, device, 4, callback, flags)
@@ -648,7 +651,7 @@ exports.pigpio = function (pi) {
     let buffer = Buffer.from(data);
     return request(I2CWD, handle, 0, data.length, callback, buffer)
   }
-  
+
   that.bscI2C = function (address, data, callback) {
     let control
     if (address > 0 && address < 128) {
@@ -657,7 +660,7 @@ exports.pigpio = function (pi) {
     else {
       control = 0
     }
-    
+
     let buffer
     if (data && typeof data !== 'function') {
       buffer = Buffer.from(data)
@@ -673,7 +676,7 @@ exports.pigpio = function (pi) {
 /* ___________________________________________________________________________ */
 
   that.gpio = function (gpio) {
-    
+
     var _gpio = function (gpio) {
       assert(typeof gpio === 'number' && isUserGpio(gpio),
           "Argument 'gpio' is not a user GPIO.")
@@ -824,7 +827,7 @@ exports.pigpio = function (pi) {
             temp = chain.concat(255, 0)
           } else if (param.hasOwnProperty('repeat')) {
             if (param.repeat === true) {
-              temp = chain.concat(255, 3)            
+              temp = chain.concat(255, 3)
             } else {
               assert.equal(param.repeat <= 0xffff, true, 'param must be <= 65535')
               temp = chain.concat(255, 1, param.repeat & 0xff, param.repeat >> 8)
@@ -939,7 +942,7 @@ exports.pigpio = function (pi) {
       else
         assert(isUserGpio(rx) && isUserGpio(tx),
         "Arguments 'rx' and 'tx' must be valid user GPIO")
-      
+
       var baud, bits, isOpen=false, txBusy=false, maxChars, buffer=''
       var _rx, _tx, _dtr
       _rx = new that.gpio(rx)
@@ -967,7 +970,7 @@ exports.pigpio = function (pi) {
         assert(typeof bits === 'number', "argument 'dataBits' must be a number")
         assert(!isNaN(bits) && bits > 0 && bits < 33,
             "argument 'dataBits' must be a positive number between 1 and 32")
-          
+
         // initialize rx
         _rx.serialReadOpen(baud, bits, (err) => {
           if (err && err.code === 'PI_GPIO_IN_USE') {
@@ -1013,7 +1016,7 @@ exports.pigpio = function (pi) {
               cb(null, true)
           }
         })
-        
+
         // initialize tx
         _tx.waveClear((err) => {
           if (err) throw(createSPError(err))
@@ -1056,26 +1059,26 @@ exports.pigpio = function (pi) {
           })
         } else callb(null)
       }
-      
+
       this.write = function (data) {
       /*  Saves data, coerced to utf8 string, to a buffer then sends chunks of
        *  of size 'maxChars' to waveAddSerial().  Returns the size (>=0) of buffer.
-       *  If the serial port is not open, returns -1.  
+       *  If the serial port is not open, returns -1.
        *  Pigpio errors will be thrown to limit possible data corruption.
       */
         if (isOpen === false)
           return -1
-        
+
         buffer += data  // fast concatenation with coercion to string type
         if (txBusy)
           return buffer.length
-        
+
         let chunk = buffer.slice(0, maxChars) // computed in serialport.open()
         buffer = buffer.slice(chunk.length)
         txBusy = true
         if (chunk) send(chunk)
         return buffer.length
-        
+
         function send(data) {
           log('serialport sending data ', data.length)
           _tx.waveAddSerial(baud, bits, 0, data, (err) => {
@@ -1093,7 +1096,7 @@ exports.pigpio = function (pi) {
                         buffer = buffer.slice(chunk.length)
                         send(chunk)
                       }
-                      else 
+                      else
                         txBusy = false
                     })
                   })
@@ -1154,6 +1157,159 @@ exports.pigpio = function (pi) {
     _serialport.prototype = that
     return new _serialport(rx, tx, dtr)
   }// pigpio serialport constructor
+
+  /*
+   * SPI functions
+   */
+  that.spi = function (channel) {
+    var _spi = function (channel) {
+      assert(typeof channel === 'number',
+          "Argument 'channel' is not a number.");
+      let handle;
+      this.open = function(baud, spiFlags) {
+        let arrBuf = new ArrayBuffer(4);
+        let flagsBuf = new Uint32Array(arrBuf, 0, 1);
+        flagsBuf[0] = spiFlags;
+        let callback;
+        let promise = new Promise((resolve, reject) => {
+          callback = (error, res) => {
+            if (error) {
+              reject(error);
+            } else {
+              handle = res;
+              resolve();
+            }
+          }
+        });
+        request(SPIO, channel, baud, 4, callback, arrBuf);
+        return promise;
+      };
+      this.close = function(callback) {
+        return request(SPIC, handle, 0, 0, callback) // always returns 0
+      };
+      /* data needs to be a buffer/Uint8Array */
+      this.write = function(data, callback) {
+        return request(SPIW, handle, 0, data.byteLength, callback, data);
+      };
+    }
+    _spi.prototype = that;
+    return new _spi(channel);
+  }// pigpio spi constructor
+
+  /*
+   * File functions
+   */
+  that.file = function () {
+    let _file = function () {
+      let handle;
+      // remoteFileName: string
+      // mode: number (1,2,3 aka PI_FILE_READ, PI_FILE_WRITE, PI_FILE_RW)
+      this.open = function(remoteFileName, mode) {
+        let enc = new TextEncoder();  // always utf-8
+        let remoteFileNameArr = enc.encode(remoteFileName);
+        let callback;
+        let promise = new Promise((resolve, reject) => {
+          callback = (error, res) => {
+            if (error) {
+              reject(error);
+            } else {
+              handle = res;
+              resolve();
+            }
+          }
+        });
+        request(FO, mode, 0, remoteFileNameArr.length, callback, remoteFileNameArr);
+        return promise;
+      };
+      this.close = function (callback) {
+        return request(FC, handle, 0, 0, callback);
+      };
+      // returns: normal array of bytes
+      this.read = function (count) {
+        let callback;
+        let promise = new Promise((resolve, reject) => {
+          callback = (error, len, ...bytes) => {
+            if (error) {
+              reject(error);
+            } else if (len === 0) {
+              resolve();
+            } else {
+              resolve(bytes);
+            }
+          }
+        });
+        request(FR, handle, count, 0, callback);
+        return promise;
+      };
+      // offet: number (seek offset, uint32)
+      // from: number (0,1,2 aka seek position PI_FROM_START, PI_FROM_CURRENT, PI_FROM_END)
+      // returns: seek position
+      this.seek = function (offset, from, callback) {
+        let arrBuf = new ArrayBuffer(4);
+        let fromBuf = new Uint32Array(arrBuf, 0, 1);
+        fromBuf[0] = from;
+        return request(FS, handle, offset, 4, callback, arrBuf);
+      };
+    }
+    _file.prototype = that;
+    return new _file();
+  }// pigpio file constructor
+
+  /*
+   * I2C functions
+   */
+  that.i2c = function (bus, address) {
+    var _i2c = function (bus, address) {
+      assert(typeof bus === 'number', "Argument 'bus' is not a number.");
+      assert(typeof address === 'number', "Argument 'address' is not a number.");
+      let handle;
+      this.open = function (i2cFlags) {
+        let arrBuf = new ArrayBuffer(4);
+        let flagsBuf = new Uint32Array(arrBuf, 0, 1);
+        flagsBuf[0] = i2cFlags;
+        let callback;
+        let promise = new Promise((resolve, reject) => {
+          callback = (error, res) => {
+            if (error) {
+              reject(error);
+            } else {
+              handle = res;
+              resolve();
+            }
+          }
+        });
+        request(I2CO, bus, address, 4, callback, arrBuf);
+        return promise;
+      };
+      this.close = function (callback) {
+        return request(I2CC, handle, 0, 0, callback) // always returns 0
+      };
+      // returns: normal array of bytes
+      this.read = function (count) {
+        let callback;
+        let promise = new Promise((resolve, reject) => {
+          callback = (error, len, ...bytes) => {
+            if (error) {
+              reject(error);
+            } else if (len === 0) {
+              resolve();
+            } else {
+              resolve(bytes);
+            }
+          }
+        });
+        request(I2CRD, handle, count, 0, callback);
+        return promise;
+      };
+      /* data needs to be a buffer/Uint8Array */
+      this.write = function (data, callback) {
+        return request(I2CWD, handle, 0, data.byteLength, callback, data);
+      };
+    }
+    _i2c.prototype = that;
+    return new _i2c(bus, address);
+  }// pigpio i2c constructor
+
   return that
 }// pigpio constructor
 
